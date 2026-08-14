@@ -74,6 +74,36 @@ The workspace tracks the file system itself, so nothing needs to be called after
 `julia_update_file` is routed but not advertised, for embedders that pass `watch: false` to
 `julia_set_workspace_folders` and drive refreshes themselves.
 
+### Test item ids
+
+`julia_list_testitems` reports an id for every test item, and `julia_run_testitems`,
+`julia_get_testitem_detail` and the `testrun://` resources all take or return those same
+ids. They look like this:
+
+```
+test/parsing_tests.jl::parse basics
+```
+
+That is `<path>::<label>`, where the path is the file the `@testitem` is defined in,
+relative to the root of the package it belongs to and always written with `/` separators —
+so an id is identical on Windows and on Linux, and identical in a dev checkout and on a CI
+runner. (A file that has no filesystem path to make relative falls back to its full URI.)
+
+**Ids are stable.** They depend only on the file and the test item's name, so inserting or
+removing other test items in the same file, or anywhere else in the package, does not change
+them. This is what makes `julia_rerun_failed` correct: it re-runs the failed items of an
+earlier run by id, and the agent will usually have edited the code in between. The same
+holds for ids used in the `items` filter of `julia_run_testitems`, and for ids an agent
+writes down and comes back to later. The ids that appear in `juliati`'s results JSON and
+JUnit XML output are these same ids.
+
+Two test items in one file are not supposed to share a name. If they do, every occurrence of
+that name is suffixed `#1`, `#2`, … so the ids stay unique and each item remains individually
+addressable, and a test item definition error is reported for each of them — visible through
+`julia_get_diagnostics` and the `workspace://detection-errors` resource. Note that this is
+the one case where ids are not stable: resolving the duplicate renumbers its siblings.
+Duplicate names are a mistake worth fixing rather than a state to persist ids from.
+
 ### Resources
 
 Static resources cover the current workspace state (`workspace://testitems`,
