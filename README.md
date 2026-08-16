@@ -81,13 +81,27 @@ The workspace tracks the file system itself, so nothing needs to be called after
 ids. They look like this:
 
 ```
-test/parsing_tests.jl::parse basics
+MyPkg@a1b2c3d4/test/parsing_tests.jl::parse basics
 ```
 
-That is `<path>::<label>`, where the path is the file the `@testitem` is defined in,
-relative to the root of the package it belongs to and always written with `/` separators —
-so an id is identical on Windows and on Linux, and identical in a dev checkout and on a CI
-runner. (A file that has no filesystem path to make relative falls back to its full URI.)
+That is `<package>/<path>::<label>`.
+
+The package is `<name>@<first eight hex digits of its uuid>`. Both halves matter: the name is
+what you recognise, and the uuid fragment separates two different packages that happen to
+share a name — a vendored copy sitting beside a dev checkout, say.
+
+The path is the file the `@testitem` is defined in, relative to the root of the package it
+belongs to and always written with `/` separators — so an id is identical on Windows and on
+Linux, and identical in a dev checkout and on a CI runner. (A file with no filesystem path to
+make relative falls back to its full URI, unqualified, since a URI is already unique.)
+
+**An id identifies a test item within its package, not within a workspace.** The *same*
+package checked out into two folders — two worktrees, say — produces the same id from both,
+deliberately. Two checkouts can only be told apart by their location, and location differs
+between a dev checkout and a CI runner, so no single string can be both unique across a
+workspace and portable across machines; the id keeps portability. Where uniqueness matters,
+this server pairs the id with the package it came from, and results carry the file URI
+alongside the id.
 
 **Ids are stable.** They depend only on the file and the test item's name, so inserting or
 removing other test items in the same file, or anywhere else in the package, does not change

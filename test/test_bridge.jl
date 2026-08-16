@@ -20,7 +20,9 @@
             @test item.code_column isa Int && item.code_column >= 1
             @test item.package_name == "BasicPkg"
             @test !isempty(item.code)
-            @test haskey(pkg_info, item.id)
+            # Keyed by `(id, package_uri)`, since an id alone does not identify an item when
+            # the same package is checked out into two folders of one workspace.
+            @test haskey(pkg_info, (item.id, item.package_uri))
         end
 
         for setup in setups

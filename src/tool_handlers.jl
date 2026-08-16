@@ -270,7 +270,7 @@ function tool_run_testitems(state::AppState, args::Dict{String,Any}; progress_to
     # Build work units mapping each item to its matching test environment
     timeout = filter !== nothing ? get(filter, :timeout, nothing) : nothing
     work_units = [
-        TestItemControllers.TestRunItem(item.id, env_id_for_item[item.id], timeout, log_level)
+        TestItemControllers.TestRunItem(item.id, env_id_for_item[(item.id, item.package_uri)], timeout, log_level)
         for item in items
     ]
 
