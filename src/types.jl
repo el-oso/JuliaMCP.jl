@@ -48,14 +48,6 @@ function TestRunRecord(id, status, profile_params, items, coverage, started_at, 
     )
 end
 
-mutable struct ProcessInfo
-    id::String
-    package_name::String
-    status::String
-    package_uri::String
-    project_uri::String
-end
-
 """
 A Julia session managed by JuliaSessionControllers, plus the output the app has seen for
 it. `request_outputs` is keyed by the request id the caller supplied to `JSC.evaluate`.
