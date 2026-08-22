@@ -60,10 +60,10 @@ function dynamic_resources(state::AppState)
                 "mimeType" => "application/json",
             ))
         end
-        for (id, p) in state.processes
+        for p in list_test_processes(state)
             push!(res, Dict{String,Any}(
-                "uri" => "testprocess://$id/output",
-                "name" => "Process $id output ($(p.package_name), $(p.status))",
+                "uri" => "testprocess://$(p.id)/output",
+                "name" => "Process $(p.id) output ($(p.package_name), $(p.status))",
                 "mimeType" => "text/plain",
             ))
         end
@@ -203,10 +203,8 @@ function read_resource(state::AppState, uri::String)
     m = match(r"^testprocess://([^/]+)/output$", uri)
     if m !== nothing
         process_id = m[1]
-        output = lock(state.lock) do
-            buf = get(state.process_outputs, process_id, nothing)
-            buf === nothing ? nothing : join(buf, "")
-        end
+        output = any(p -> p.id == process_id, list_test_processes(state)) ?
+            TIR.process_output(state.session, process_id) : nothing
         output === nothing && throw(ResourceNotFound(uri, "Test process not found: $process_id"))
         return [Dict{String,Any}("uri" => uri, "mimeType" => "text/plain", "text" => output)]
     end

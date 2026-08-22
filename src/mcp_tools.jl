@@ -222,7 +222,7 @@ function tool_definitions()
                     "coverage_root_uris" => Dict{String,Any}(
                         "type" => "array",
                         "items" => Dict{String,Any}("type" => "string"),
-                        "description" => "Root URIs for coverage collection (Coverage mode only).",
+                        "description" => "Deprecated and ignored: coverage is always collected for the packages under test.",
                     ),
                     "include_passing" => Dict{String,Any}(
                         "type" => "boolean",

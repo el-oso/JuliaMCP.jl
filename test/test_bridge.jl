@@ -1,4 +1,4 @@
-@testitem "resolve_testitems produces valid source positions" setup=[MCPTestHelpers] begin
+@testitem "discover produces valid source positions" setup=[MCPTestHelpers] begin
     using .MCPTestHelpers
     using JuliaMCP: JuliaWorkspaces
 
@@ -6,9 +6,9 @@
         pkg = joinpath(MCPTestHelpers.TESTDATA_DIR, "BasicPkg")
         state.workspace = JuliaWorkspaces.workspace_from_folders([pkg])
 
-        # Regression: this used to throw a MethodError because `position_at`
-        # returns a `Position` struct, which was being indexed with `[1]`/`[2]`.
-        items, setups, pkg_info = JuliaMCP.resolve_testitems(state)
+        d = JuliaMCP.discover(state)
+        items = d.testitems
+        setups = d.setups
 
         @test length(items) == 7
         @test length(setups) == 2
@@ -16,13 +16,13 @@
         for item in items
             @test item.line isa Int && item.line >= 1
             @test item.column isa Int && item.column >= 1
-            @test item.code_line isa Int && item.code_line >= 1
-            @test item.code_column isa Int && item.code_column >= 1
+            @test item.detail.code_line isa Int && item.detail.code_line >= 1
+            @test item.detail.code_column isa Int && item.detail.code_column >= 1
             @test item.package_name == "BasicPkg"
             @test !isempty(item.code)
-            # Keyed by `(id, package_uri)`, since an id alone does not identify an item when
-            # the same package is checked out into two folders of one workspace.
-            @test haskey(pkg_info, (item.id, item.package_uri))
+            # Items are keyed by `(id, package_uri)`, since an id alone does not identify an
+            # item when the same package is checked out into two folders of one workspace.
+            @test JuliaMCP.TIR.key(item) == (item.id, item.package_uri)
         end
 
         for setup in setups
@@ -40,8 +40,8 @@ end
         pkg = joinpath(MCPTestHelpers.TESTDATA_DIR, "BasicPkg")
         state.workspace = JuliaWorkspaces.workspace_from_folders([pkg])
 
-        items, _, _ = JuliaMCP.resolve_testitems(state)
-        passing = only(filter(i -> i.label == "passing", items))
+        items = JuliaMCP.discover(state).testitems
+        passing = only(filter(i -> i.name == "passing", items))
 
         source = read(joinpath(pkg, "test", "test_basics.jl"), String)
         lines = collect(eachline(IOBuffer(source)))
@@ -49,7 +49,7 @@ end
         # The macro call must be on a line that actually starts the test item.
         @test occursin("@testitem \"passing\"", lines[passing.line])
         # The code body starts at or after the macro call, never before it.
-        @test passing.code_line >= passing.line
+        @test passing.detail.code_line >= passing.line
         @test occursin("BasicPkg.add_one(1) == 2", passing.code)
     end
 end
@@ -62,7 +62,8 @@ end
         pkg = joinpath(MCPTestHelpers.TESTDATA_DIR, "BasicPkg")
         state.workspace = JuliaWorkspaces.workspace_from_folders([pkg])
 
-        items, setups, _ = JuliaMCP.resolve_testitems(state)
+        d = JuliaMCP.discover(state)
+        items, setups = d.testitems, d.setups
 
         byname = Dict(s.name => s for s in setups)
         @test occursin("magic_number", byname["SharedFixture"].code)
@@ -70,11 +71,11 @@ end
         # `kind` distinguishes a `@testmodule` from a `@testsnippet`.
         @test byname["SharedFixture"].kind != byname["SharedSnippet"].kind
 
-        consumer = only(filter(i -> i.label == "uses setup", items))
-        @test consumer.test_setups == ["SharedFixture"]
+        consumer = only(filter(i -> i.name == "uses setup", items))
+        @test consumer.setups == ["SharedFixture"]
 
-        plain = only(filter(i -> i.label == "passing", items))
-        @test isempty(plain.test_setups)
+        plain = only(filter(i -> i.name == "passing", items))
+        @test isempty(plain.setups)
     end
 end
 
@@ -86,57 +87,38 @@ end
         pkg = joinpath(MCPTestHelpers.TESTDATA_DIR, "BasicPkg")
         state.workspace = JuliaWorkspaces.workspace_from_folders([pkg])
 
-        items, _, _ = JuliaMCP.resolve_testitems(state)
+        items = JuliaMCP.discover(state).testitems
 
-        @test only(filter(i -> i.label == "passing", items)).option_default_imports
-        @test !only(filter(i -> i.label == "no default imports", items)).option_default_imports
+        @test only(filter(i -> i.name == "passing", items)).detail.option_default_imports
+        @test !only(filter(i -> i.name == "no default imports", items)).detail.option_default_imports
     end
 end
 
-@testitem "build_test_environments groups items by package" setup=[MCPTestHelpers] begin
-    using .MCPTestHelpers
-    using JuliaMCP: JuliaWorkspaces
-
-    MCPTestHelpers.with_app_state() do state
-        pkg = joinpath(MCPTestHelpers.TESTDATA_DIR, "BasicPkg")
-        state.workspace = JuliaWorkspaces.workspace_from_folders([pkg])
-
-        _, _, pkg_info = JuliaMCP.resolve_testitems(state)
-        args = Dict{String,Any}("julia_cmd" => "julia", "mode" => "Coverage", "max_workers" => 3)
-        envs, env_for_item, max_processes, coverage_roots, log_level =
-            JuliaMCP.build_test_environments(args, pkg_info)
-
-        @test length(envs) == 1
-        @test only(envs).package_name == "BasicPkg"
-        @test only(envs).mode == "Coverage"
-        @test max_processes == 3
-        @test coverage_roots === nothing
-        @test log_level isa Symbol
-        # Every item must map to an environment that actually exists.
-        env_ids = Set(e.id for e in envs)
-        @test !isempty(env_for_item)
-        @test all(id -> id in env_ids, values(env_for_item))
-        @test keys(env_for_item) == keys(pkg_info)
-    end
+@testitem "run_profile and run_options translate tool arguments" begin
+    args = Dict{String,Any}("julia_cmd" => "julia", "mode" => "Coverage", "max_workers" => 3,
+        "julia_num_threads" => "2", "julia_args" => Any["--check-bounds=yes"])
+    profile = JuliaMCP.run_profile(args)
+    @test profile.coverage
+    @test !JuliaMCP.run_profile(Dict{String,Any}()).coverage
+    opts = JuliaMCP.run_options(args)
+    @test opts.max_workers == 3
+    @test opts.julia_cmd == "julia"
+    @test opts.julia_num_threads == "2"
+    @test opts.julia_args == ["--check-bounds=yes"]
+    @test JuliaMCP.run_options(Dict{String,Any}()).julia_num_threads === nothing
 end
 
-@testitem "test environments drop the app shim's Julia env vars" setup=[MCPTestHelpers] begin
-    using .MCPTestHelpers
-    using JuliaMCP: JuliaWorkspaces
-
-    MCPTestHelpers.with_app_state() do state
-        pkg = joinpath(MCPTestHelpers.TESTDATA_DIR, "BasicPkg")
-        state.workspace = JuliaWorkspaces.workspace_from_folders([pkg])
-
-        _, _, pkg_info = JuliaMCP.resolve_testitems(state)
-        envs, _, _, _, _ = JuliaMCP.build_test_environments(Dict{String,Any}(), pkg_info)
-
-        # A `nothing` value makes TestItemControllers remove the variable from the
-        # test process environment. Inheriting the shim's JULIA_LOAD_PATH would
-        # leave the test process unable to load its own environment.
-        for var in ("JULIA_LOAD_PATH", "JULIA_PROJECT", "JULIA_DEPOT_PATH")
-            @test only(envs).julia_env[var] === nothing
-        end
+@testitem "test processes drop the app shim's Julia env vars" begin
+    # A `nothing` value makes TestItemControllers remove the variable from the test
+    # process environment. Inheriting the shim's JULIA_LOAD_PATH would leave the test
+    # process unable to load its own environment. TestItemRuns does this for every profile.
+    env = JuliaMCP.TIR._child_env(JuliaMCP.run_profile(Dict{String,Any}()))
+    for var in ("JULIA_LOAD_PATH", "JULIA_PROJECT", "JULIA_DEPOT_PATH")
+        @test env[var] === nothing
+    end
+    # Julia sessions get the same overrides explicitly.
+    for var in ("JULIA_LOAD_PATH", "JULIA_PROJECT", "JULIA_DEPOT_PATH")
+        @test JuliaMCP.shim_env_overrides()[var] === nothing
     end
 end
 
@@ -149,30 +131,28 @@ end
         jw = JuliaWorkspaces.workspace_from_folders([pkg])
         state.workspace = jw
 
-        uri, details = only(filter(p -> !isempty(p[2].testitems), collect(pairs(JuliaWorkspaces.get_test_items(jw)))))
-        env = JuliaWorkspaces.get_test_env(jw, uri)
-        byname = Dict(i.name => i for i in details.testitems)
+        byname = Dict(i.name => i for i in JuliaMCP.discover(state).testitems)
 
-        @test passes_filter(byname["also passing"], env, uri, Dict(:tags => ["fast"]))
-        @test !passes_filter(byname["passing"], env, uri, Dict(:tags => ["fast"]))
-        @test passes_filter(byname["failing"], env, uri, Dict(:tags => ["flaky"]))
+        @test passes_filter(byname["also passing"], Dict(:tags => ["fast"]))
+        @test !passes_filter(byname["passing"], Dict(:tags => ["fast"]))
+        @test passes_filter(byname["failing"], Dict(:tags => ["flaky"]))
 
-        @test passes_filter(byname["passing"], env, uri, Dict(:name_pattern => "^passing\$"))
-        @test !passes_filter(byname["failing"], env, uri, Dict(:name_pattern => "^passing\$"))
+        @test passes_filter(byname["passing"], Dict(:name_pattern => "^passing\$"))
+        @test !passes_filter(byname["failing"], Dict(:name_pattern => "^passing\$"))
         # Name matching is case-insensitive.
-        @test passes_filter(byname["passing"], env, uri, Dict(:name_pattern => "PASSING"))
+        @test passes_filter(byname["passing"], Dict(:name_pattern => "PASSING"))
 
-        @test passes_filter(byname["passing"], env, uri, Dict(:file_pattern => "test_basics"))
-        @test !passes_filter(byname["passing"], env, uri, Dict(:file_pattern => "nonexistent"))
+        @test passes_filter(byname["passing"], Dict(:file_pattern => "test_basics"))
+        @test !passes_filter(byname["passing"], Dict(:file_pattern => "nonexistent"))
 
-        @test passes_filter(byname["passing"], env, uri, Dict(:package => "BasicPkg"))
-        @test !passes_filter(byname["passing"], env, uri, Dict(:package => "OtherPkg"))
+        @test passes_filter(byname["passing"], Dict(:package => "BasicPkg"))
+        @test !passes_filter(byname["passing"], Dict(:package => "OtherPkg"))
 
-        @test passes_filter(byname["passing"], env, uri, Dict(:ids => Set([byname["passing"].id])))
-        @test !passes_filter(byname["failing"], env, uri, Dict(:ids => Set([byname["passing"].id])))
+        @test passes_filter(byname["passing"], Dict(:ids => Set([byname["passing"].id])))
+        @test !passes_filter(byname["failing"], Dict(:ids => Set([byname["passing"].id])))
 
         # Multiple criteria must all hold.
-        @test !passes_filter(byname["passing"], env, uri, Dict(:tags => ["fast"], :package => "BasicPkg"))
+        @test !passes_filter(byname["passing"], Dict(:tags => ["fast"], :package => "BasicPkg"))
     end
 end
 
@@ -200,7 +180,7 @@ end
 
 @testitem "coverage_to_dicts matches the FileCoverage layout" begin
     using JuliaMCP: coverage_to_dicts
-    using TestItemControllers: FileCoverage
+    using TestItemRuns: TestrunResultFileCoverage as FileCoverage
 
     # Regression: this used to read `fc.lines`, which does not exist —
     # `FileCoverage` stores one entry per source line in `coverage`.
@@ -282,10 +262,10 @@ end
     end
 end
 
-@testitem "resolve_testitems requires a workspace" setup=[MCPTestHelpers] begin
+@testitem "discover requires a workspace" setup=[MCPTestHelpers] begin
     using .MCPTestHelpers
 
     MCPTestHelpers.with_app_state() do state
-        @test_throws ErrorException JuliaMCP.resolve_testitems(state)
+        @test_throws ErrorException JuliaMCP.discover(state)
     end
 end

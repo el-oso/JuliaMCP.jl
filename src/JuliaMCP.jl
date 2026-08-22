@@ -1,17 +1,19 @@
 module JuliaMCP
 
-import JSON, JSONRPC, JuliaWorkspaces, TestItemControllers
+import JSON, JSONRPC, JuliaWorkspaces, TestItemRuns
 import JuliaSessionControllers
 import UUIDs, Dates, Logging
 
-# Never `using` this one: it exports `shutdown`, `wait_for_shutdown`, `list_sessions` and
-# `ControllerCallbacks`, all of which collide with TestItemControllers.
+# Never `using` either of these: JuliaSessionControllers exports `shutdown`,
+# `wait_for_shutdown`, `list_sessions`; TestItemRuns exports `select`, `run!`, `filename`,
+# … — all qualified here.
 const JSC = JuliaSessionControllers
+const TIR = TestItemRuns
 
-# TestItemControllers vendors its own copy of CancellationTokens, and tokens
-# cross that boundary in `execute_testrun` — so we must use the same one it does
-# rather than a separately resolved package.
-const CancellationTokens = TestItemControllers.CancellationTokens
+# TestItemRuns re-exports the CancellationTokens module TestItemControllers vendors, and
+# tokens cross that boundary — so we must use the same one rather than a separately
+# resolved package.
+const CancellationTokens = TestItemRuns.CancellationTokens
 
 include("types.jl")
 include("state.jl")

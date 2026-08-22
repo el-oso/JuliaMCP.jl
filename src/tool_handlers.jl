@@ -251,42 +251,24 @@ function tool_run_testitems(state::AppState, args::Dict{String,Any}; progress_to
     init_controller!(state)
 
     filter = build_filter(args)
-    items, setups, item_package_info = resolve_testitems(state; filter=filter)
+    d = discover(state; filter=filter)
 
-    if isempty(items)
+    if isempty(d)
         return tool_result_text("No test items matched the given filter.")
     end
+    items = d.testitems
 
-    test_envs, env_id_for_item, max_processes, coverage_root_uris, log_level = build_test_environments(args, item_package_info)
-    testrun_id = test_envs[1].id
-
-    # Register test environments for on_process_created callback
-    lock(state.lock) do
-        for env in test_envs
-            state.test_env_by_id[env.id] = env
-        end
-    end
-
-    # Build work units mapping each item to its matching test environment
+    testrun_id = string(UUIDs.uuid4())
     timeout = filter !== nothing ? get(filter, :timeout, nothing) : nothing
-    work_units = [
-        TestItemControllers.TestRunItem(item.id, env_id_for_item[(item.id, item.package_uri)], timeout, log_level)
-        for item in items
-    ]
 
-    # Create cancellation source
-    cts = CancellationTokens.CancellationTokenSource()
-    lock(state.lock) do
-        state.cancellation_sources[testrun_id] = cts
-    end
-
-    # Register test run record with pending items
+    # Register test run record with pending items — before the run starts, so the event
+    # sink finds it and progress totals are right from the first event.
     run_record = TestRunRecord(
         testrun_id,
         :running,
         args,
         Dict{String,TestItemResult}(
-            item.id => TestItemResult(item.id, item.label, item.uri, :pending, nothing, Any[], String[])
+            item.id => TestItemResult(item.id, item.name, item.uri, :pending, nothing, Any[], String[])
             for item in items
         ),
         nothing,
@@ -307,18 +289,17 @@ function tool_run_testitems(state::AppState, args::Dict{String,Any}; progress_to
 
     mcp_info(state, "tools", "Starting test run $testrun_id with $(length(items)) item(s)")
 
-    coverage_results = try
-        TestItemControllers.execute_testrun(
-            state.controller,
-            testrun_id,
-            test_envs,
-            items,
-            work_units,
-            setups,
-            max_processes,
-            CancellationTokens.get_token(cts);
-            coverage_root_uris=coverage_root_uris,
-        )
+    result = try
+        run = TIR.run_async!(state.session, d;
+            profiles = [run_profile(args)],
+            timeout = timeout,
+            fail_on_definition_error = false,
+            id = testrun_id,
+            run_options(args)...)
+        lock(state.lock) do
+            state.active_runs[testrun_id] = run
+        end
+        fetch(run)
     catch e
         lock(state.lock) do
             # An explicit cancel may already have recorded a terminal status, and the error it
@@ -331,14 +312,16 @@ function tool_run_testitems(state::AppState, args::Dict{String,Any}; progress_to
     finally
         stop_heartbeat!(run_record)
         lock(state.lock) do
-            delete!(state.cancellation_sources, testrun_id)
+            delete!(state.active_runs, testrun_id)
         end
     end
 
     lock(state.lock) do
-        finalize_run_status!(run_record, :completed)
-        if coverage_results !== nothing
-            run_record.coverage = coverage_to_dicts(coverage_results)
+        # A cancelled run returns normally with its partial result; the run's own status
+        # tells the two apart.
+        finalize_run_status!(run_record, iscancelled_result(state, testrun_id) ? :cancelled : :completed)
+        if result.coverage !== nothing
+            run_record.coverage = coverage_to_dicts(result.coverage)
         end
     end
 
@@ -424,12 +407,12 @@ end
 function tool_cancel_testrun(state::AppState, args::Dict{String,Any})
     testrun_id = args["testrun_id"]::String
 
-    cts = lock(state.lock) do
-        get(state.cancellation_sources, testrun_id, nothing)
+    run = lock(state.lock) do
+        get(state.active_runs, testrun_id, nothing)
     end
-    cts === nothing && return tool_result_error("No active test run with ID: $testrun_id")
+    run === nothing && return tool_result_error("No active test run with ID: $testrun_id")
 
-    CancellationTokens.cancel(cts)
+    TIR.cancel!(run)
 
     lock(state.lock) do
         run = get(state.runs, testrun_id, nothing)
@@ -558,17 +541,15 @@ end
 # --- list_test_processes ---
 
 function tool_list_test_processes(state::AppState, args::Dict{String,Any})
-    procs = lock(state.lock) do
-        [
-            Dict{String,Any}(
-                "id" => p.id,
-                "package_name" => p.package_name,
-                "status" => p.status,
-                "package_uri" => p.package_uri,
-                "project_uri" => p.project_uri,
-            ) for p in values(state.processes)
-        ]
-    end
+    procs = [
+        Dict{String,Any}(
+            "id" => p.id,
+            "package_name" => p.package_name,
+            "status" => p.status,
+            "package_uri" => p.package_uri,
+            "project_uri" => something(p.project_uri, ""),
+        ) for p in list_test_processes(state)
+    ]
     return tool_result_json(procs)
 end
 
@@ -576,8 +557,8 @@ end
 
 function tool_terminate_test_process(state::AppState, args::Dict{String,Any})
     process_id = args["process_id"]::String
-    state.controller === nothing && return tool_result_error("Controller not initialized.")
-    TestItemControllers.terminate_test_process(state.controller, process_id)
+    state.session === nothing && return tool_result_error("Controller not initialized.")
+    TIR.terminate_process!(state.session, process_id)
     return tool_result_text("Process $process_id termination requested.")
 end
 
@@ -599,6 +580,16 @@ function tool_get_coverage_results(state::AppState, args::Dict{String,Any})
 end
 
 # --- Helpers ---
+
+"The test processes of the session, or none when there is no session yet."
+list_test_processes(state::AppState) = state.session === nothing ? TIR.ProcessInfo[] : TIR.list_processes(state.session)
+
+"Whether the TestItemRuns run behind `testrun_id` finished by cancellation."
+function iscancelled_result(state::AppState, testrun_id::String)
+    state.session === nothing && return false
+    run = TIR.get_run(state.session, testrun_id)
+    return run !== nothing && run.status === :cancelled
+end
 
 function build_filter(args::Dict{String,Any})
     filter = Dict{Symbol,Any}()
