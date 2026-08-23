@@ -41,6 +41,44 @@
     end
 end
 
+@testitem "a heartbeat after the last item cannot push progress past total" setup=[MCPTestHelpers] begin
+    using .MCPTestHelpers
+    using JuliaMCP: TestRunRecord, TestItemResult, report_progress!
+    using Dates
+
+    # A heartbeat firing after the last item finished used to take the `elseif heartbeat`
+    # branch with `done == total`, adding half the ceiling on top of a value already equal to
+    # `total`: progress went to 7.475/7, and that impossible value was the client's last word
+    # on the run, since the final call reports `total` and could no longer beat it.
+    MCPTestHelpers.with_app_state() do state
+        items = Dict{String,TestItemResult}(
+            "a" => TestItemResult("a", "a", "file:///a.jl", :pending, nothing, Any[], String[]),
+            "b" => TestItemResult("b", "b", "file:///a.jl", :pending, nothing, Any[], String[]),
+        )
+        run = TestRunRecord("run-1", :running, Dict{String,Any}(), items, nothing, Dates.now(), nothing)
+        run.progress_token = "tok"
+        state.runs["run-1"] = run
+
+        items["a"].status = :passed
+        items["b"].status = :passed
+        report_progress!(state, run)
+        @test run.progress_value == 2.0
+
+        # Heartbeats with nothing left to run must not move the value at all.
+        for _ in 1:3
+            report_progress!(state, run; heartbeat=true)
+            @test run.progress_value == 2.0
+        end
+
+        # The last value a client sees is therefore exactly `total`, which is what
+        # "run_testitems streams progress notifications" asserts end-to-end. The final call
+        # reports `total` too, so the strictly-increasing guard drops it — that is unchanged
+        # and deliberate: the spec forbids sending the same value twice.
+        report_progress!(state, run; final=true)
+        @test run.progress_value == 2.0
+    end
+end
+
 @testitem "run_testitems streams progress notifications" setup=[MCPTestHelpers] tags=[:e2e] begin
     using .MCPTestHelpers
 

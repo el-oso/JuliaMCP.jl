@@ -126,6 +126,9 @@ that started it.
 Progress is reported as `done + frac`, where `done` counts finished test items and `frac`
 is a heartbeat offset within the current item. The spec requires the value to strictly
 increase, so nothing is sent unless the candidate beats the last value actually sent.
+
+A heartbeat only ever creeps towards the *next* item, so the value cannot reach `total` before
+the run is actually over.
 """
 function report_progress!(state::AppState, run::TestRunRecord; heartbeat::Bool=false, final::Bool=false)
     token = run.progress_token
@@ -138,7 +141,11 @@ function report_progress!(state::AppState, run::TestRunRecord; heartbeat::Bool=f
         if done != run.progress_done
             run.progress_done = done
             run.progress_frac = 0.0
-        elseif heartbeat
+        elseif heartbeat && done < total
+            # Only ever creep towards the *next* item. Once every item is done there is no
+            # item left to be part-way through, and a heartbeat that still advanced `frac`
+            # pushed the value past `total` — which then blocked the final notification
+            # below, because `total` no longer beat it.
             run.progress_frac += (PROGRESS_FRAC_CEILING - run.progress_frac) / 2
         end
 
