@@ -17,6 +17,36 @@
     @test safe_byte_slice(u, 3, 4) == "β"
 end
 
+@testitem "byte and count arguments accept any Integer width" begin
+    using JuliaMCP: safe_byte_slice, truncate_output, truncate_message, profile_hot_functions
+
+    # `Int` is `Int32` on 32-bit, and these arguments arrive as `Int64` — from JSON tool
+    # arguments, and from `JuliaWorkspaces` diagnostic ranges. Annotating them `::Int` made
+    # every x86 leg throw `MethodError: no method matching safe_byte_slice(::String, ::Int64,
+    # ::Int64)`, which took out most of test_diagnostics.jl and three items in test_sessions.jl.
+    # Exercising the other width is what makes that reachable on a 64-bit machine.
+    for T in (Int32, Int64)
+        @test safe_byte_slice("hello", T(2), T(4)) == "el"
+        @test safe_byte_slice("hello", T(1), T(100)) == "hello"
+
+        text, total, truncated = truncate_output(["hello world"], T(5))
+        @test truncated
+        @test total == 11
+        @test endswith(text, "world")
+
+        @test truncate_output(["ab"], T(100)) == ("ab", 2, false)
+
+        msg = Dict{String,Any}("stack_trace" => ["a", "b", "c"])
+        out = truncate_message(msg, T(2))
+        @test out["stack_trace"] == ["a", "b"]
+        @test out["total_stack_frames"] == 3
+        @test truncate_message(msg, T(10)) === msg
+    end
+
+    # `profile_hot_functions` takes a JSC.ProfileResult, so it is covered by the session tests
+    # rather than constructed here; its `max_entries` was widened for the same reason.
+end
+
 @testitem "resolve_uri accepts paths and URIs" begin
     using JuliaMCP: resolve_uri
     using JuliaMCP: JuliaWorkspaces
