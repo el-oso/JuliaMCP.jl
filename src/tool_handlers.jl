@@ -477,7 +477,7 @@ function tool_get_testitem_detail(state::AppState, args::Dict{String,Any})
     return tool_result_json(details)
 end
 
-function testitem_detail_dict(run::TestRunRecord, testitem_id::String, max_output_bytes::Int, max_messages::Int, max_stack_frames::Int)
+function testitem_detail_dict(run::TestRunRecord, testitem_id::String, max_output_bytes::Integer, max_messages::Integer, max_stack_frames::Integer)
     item = get(run.items, testitem_id, nothing)
     if item === nothing
         return Dict{String,Any}(
@@ -511,7 +511,7 @@ end
 Keep the tail of the captured output — a failure and its trailing context matter more than
 whatever the test printed on the way in.
 """
-function truncate_output(chunks::Vector{String}, max_bytes::Int)
+function truncate_output(chunks::Vector{String}, max_bytes::Integer)
     text = join(chunks, "")
     total = sizeof(text)
     total <= max_bytes && return text, total, false
@@ -519,7 +519,7 @@ function truncate_output(chunks::Vector{String}, max_bytes::Int)
     return "[… $(total - sizeof(tail)) bytes elided …]\n" * tail, total, true
 end
 
-function truncate_message(msg, max_stack_frames::Int)
+function truncate_message(msg, max_stack_frames::Integer)
     frames = get(msg, "stack_trace", nothing)
     (frames === nothing || length(frames) <= max_stack_frames) && return msg
     out = copy(msg)
@@ -892,7 +892,7 @@ end
 Flatten a profile tree into the hottest functions. The tree itself is far too large to hand
 to a model, and self time is what points at the code to change.
 """
-function profile_hot_functions(result::JSC.ProfileResult, max_entries::Int)
+function profile_hot_functions(result::JSC.ProfileResult, max_entries::Integer)
     self = Dict{String,Int}()
     total = Dict{String,Int}()
     location = Dict{String,String}()

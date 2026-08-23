@@ -72,7 +72,7 @@ function run_options(params::Dict{String,Any})
         julia_cmd = get(params, "julia_cmd", "julia")::String,
         julia_args = convert(Vector{String}, get(params, "julia_args", String[])),
         julia_num_threads = julia_num_threads,
-        max_workers = get(params, "max_workers", min(Sys.CPU_THREADS, 8))::Int,
+        max_workers = Int(get(params, "max_workers", min(Sys.CPU_THREADS, 8))::Integer),
     )
 end
 

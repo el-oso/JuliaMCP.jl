@@ -15,10 +15,10 @@ end
 Slice `s` between the 1-based byte offsets `from` (inclusive) and `to`
 (exclusive), clamping to the string and snapping to character boundaries.
 """
-function safe_byte_slice(s::AbstractString, from::Int, to::Int)
+function safe_byte_slice(s::AbstractString, from::Integer, to::Integer)
     ncu = ncodeunits(s)
-    from = clamp(from, 1, ncu + 1)
-    to = clamp(to, from, ncu + 1)
+    from = clamp(Int(from), 1, ncu + 1)
+    to = clamp(Int(to), from, ncu + 1)
     to <= from && return ""
     lo = thisind(s, from)
     hi = prevind(s, thisind(s, to))
@@ -75,7 +75,7 @@ function collect_diagnostics(
     uri=nothing,
     severity=nothing,
     source=nothing,
-    max_results::Int=DIAGNOSTIC_LIMIT_DEFAULT,
+    max_results::Integer=DIAGNOSTIC_LIMIT_DEFAULT,
     wait_for_ready::Bool=false,
 )
     jw = state.workspace
