@@ -47,6 +47,34 @@ end
     # rather than constructed here; its `max_entries` was widened for the same reason.
 end
 
+@testitem "keyword and asserted counts accept any Integer width" setup=[MCPTestHelpers] begin
+    using .MCPTestHelpers
+    using JuliaMCP: collect_diagnostics, run_options
+
+    # A keyword annotation is an assertion, not a conversion: `max_results::Int` threw
+    # `TypeError: in keyword argument max_results, expected Int32, got a value of type Int64`
+    # on x86 rather than converting, so `julia_get_diagnostics` with an explicit `max_results`
+    # failed with "Failed to collect diagnostics". The same is true of the `::Int` assertion
+    # `run_options` applied to a JSON-supplied `max_workers`.
+    #
+    # The type check happens before the body runs, so passing no workspace is enough to
+    # exercise it: the call must reach the body and fail on the workspace, not on the type.
+    MCPTestHelpers.with_app_state() do state
+        for T in (Int32, Int64)
+            err = try
+                collect_diagnostics(state; max_results = T(1))
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("Workspace not configured", err.msg)
+
+            @test run_options(Dict{String,Any}("max_workers" => T(3))).max_workers == 3
+        end
+    end
+end
+
 @testitem "resolve_uri accepts paths and URIs" begin
     using JuliaMCP: resolve_uri
     using JuliaMCP: JuliaWorkspaces

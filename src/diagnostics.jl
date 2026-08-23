@@ -75,7 +75,7 @@ function collect_diagnostics(
     uri=nothing,
     severity=nothing,
     source=nothing,
-    max_results::Int=DIAGNOSTIC_LIMIT_DEFAULT,
+    max_results::Integer=DIAGNOSTIC_LIMIT_DEFAULT,
     wait_for_ready::Bool=false,
 )
     jw = state.workspace
