@@ -92,6 +92,12 @@ end
         created = MCPTestHelpers.result_json(MCPTestHelpers.call_tool(client, "julia_create_session"))
         session_id = created["session_id"]
 
+        # Warm the session first. The first evaluation in a fresh session spends seconds
+        # compiling its way through the eval path, and this test's 2s budget is meant to
+        # measure the interrupt, not that.
+        MCPTestHelpers.call_tool(client, "julia_eval_code",
+            Dict("session_id" => session_id, "code" => "1 + 1"))
+
         raw = MCPTestHelpers.call_tool(client, "julia_eval_code",
             Dict("session_id" => session_id, "code" => "sleep(60)", "timeout" => 2))
         @test MCPTestHelpers.is_error(raw)
