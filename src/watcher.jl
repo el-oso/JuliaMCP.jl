@@ -3,8 +3,6 @@
 const WATCH_INTERVAL_DEFAULT = 1.0
 const WATCH_DEBOUNCE_DEFAULT = 0.25
 
-const WATCH_SKIP_DIRS = Set(["node_modules", "build", "deps"])
-
 """
 Whether changes to `path` can affect analysis results.
 """
@@ -15,37 +13,27 @@ function is_watched_path(path::AbstractString)
         JuliaWorkspaces.is_path_toolconfig_file(path)
 end
 
-function scan_folder!(snapshot::Dict{String,Float64}, dir::AbstractString)
-    entries = try
-        readdir(dir)
-    catch
-        return snapshot
-    end
-
-    for name in entries
-        startswith(name, ".") && continue
-        name in WATCH_SKIP_DIRS && continue
-        path = joinpath(dir, name)
-        if isdir(path)
-            scan_folder!(snapshot, path)
-        elseif is_watched_path(path)
-            try
-                snapshot[path] = mtime(path)
-            catch
-                # File vanished between readdir and stat.
-            end
-        end
-    end
-    return snapshot
-end
-
 """
 Build a `path => mtime` snapshot of every analysis-relevant file under `folders`.
+
+The walk is `JuliaWorkspaces`' own, under the same [`WORKSPACE_SCOPE`](@ref) the
+workspace was built with. Sharing it is what keeps the two in agreement: a
+private walk here would re-add files the scoped workspace walk deliberately
+skipped, and would miss changes in directories it skipped but the workspace did
+not.
 """
 function scan_folders(folders)
     snapshot = Dict{String,Float64}()
     for folder in folders
-        isdir(folder) && scan_folder!(snapshot, folder)
+        isdir(folder) || continue
+        for path in JuliaWorkspaces.collect_workspace_paths(folder; scope=WORKSPACE_SCOPE)
+            is_watched_path(path) || continue
+            try
+                snapshot[path] = mtime(path)
+            catch
+                # File vanished between the walk and the stat.
+            end
+        end
     end
     return snapshot
 end

@@ -81,7 +81,7 @@ function tool_set_workspace_folders(state::AppState, args::Dict{String,Any})
     mcp_info(state, "tools", "Setting workspace folders: $folders")
 
     with_workspace_lock(state) do
-        state.workspace = JuliaWorkspaces.workspace_from_folders(folders)
+        state.workspace = JuliaWorkspaces.workspace_from_folders(folders; scope=WORKSPACE_SCOPE)
     end
     state.folders = folders
 

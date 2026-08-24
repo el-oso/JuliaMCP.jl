@@ -1,5 +1,12 @@
 # state.jl — Application state
 
+# One workspace here serves diagnostics, formatting and test-item queries alike,
+# so the folder walk may only skip a directory all three config files exclude.
+# `JuliaWorkspaces` composes the kinds as a union, and a kind with no config file
+# of its own selects everything — so this prunes nothing until a project actually
+# writes the configs.
+const WORKSPACE_SCOPE = (:lint, :format, :testitems)
+
 mutable struct AppState
     workspace::Union{Nothing,JuliaWorkspaces.JuliaWorkspace}
     # The TestItemRuns session: controller, process pool and run bookkeeping.
